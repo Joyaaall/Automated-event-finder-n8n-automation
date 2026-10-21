@@ -1,0 +1,613 @@
+{
+  "name": "Kochi tech event radar",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "6a9642f3-5121-4b0d-a01c-af75fc94f33b",
+      "name": "Daily event sweep",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS tech_event_watch (\n  event_key TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  organizer TEXT,\n  event_date DATE,\n  venue TEXT,\n  registration_status TEXT,\n  registration_url TEXT,\n  official_url TEXT,\n  material_hash TEXT,\n  event_data JSONB NOT NULL,\n  material_changed BOOLEAN NOT NULL DEFAULT TRUE,\n  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n  last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n  last_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n)",
+        "options": {}
+      },
+      "id": "626f3d4e-59d7-4fd7-9ef3-3362cb862c49",
+      "name": "Ensure events table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        112
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "8ihg4o9P8Krr2p2T",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const queries = [\n  'hackathon Kochi 2026 registration',\n  'AI workshop Kochi 2026',\n  'developer meetup Kochi 2026',\n  'TinkerHub events Kochi',\n  'TinkerSpace Kochi events',\n  'technology competition Kerala students 2026',\n  'agentic AI meetup Kerala 2026',\n  'coding workshop Kochi registration',\n  'site:luma.com Kochi AI workshop',\n  'site:unstop.com hackathon Kerala'\n];\n\nreturn queries.map((query) => ({ json: { query } }));"
+      },
+      "id": "918f58bd-1486-4ca8-a6b4-c582ea18a8a4",
+      "name": "Build search queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({query: $json.query, search_depth: \"basic\", topic: \"general\", country: \"india\", max_results: 8, chunks_per_source: 2}) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "80ceba75-1324-4651-ae34-edb2be96237d",
+      "name": "Search the web",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        720,
+        224
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "QinAsyP1eL8yxcav",
+          "name": "Tavily API key (Joyal A)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst trusted = ['lu.ma', 'luma.com', 'unstop.com', 'devfolio.co', 'tinkerhub.org', 'tinkerspace', 'meetup.com', 'konfhub.com', 'eventbrite.', 'hasgeek.com', 'fossunited.org'];\nconst cities = ['kochi', 'cochin', 'ernakulam', 'kalamassery', 'thrissur', 'kottayam', 'kozhikode', 'calicut', 'kerala'];\nconst eventWords = ['hackathon', 'workshop', 'bootcamp', 'meetup', 'conference', 'summit', 'competition', 'hack night', 'build night', 'demo day', 'devfest', 'webinar', 'training', 'sprint', 'ctf'];\nconst junk = /\\/(tag|tags|category|categories|author|authors|search|page|feed)(\\/|$)/i;\nconst seen = new Set();\nconst candidates = [];\n\nfor (const item of items) {\n  const results = item.json.results || [];\n  for (const result of results) {\n    const url = String(result.url || '').trim();\n    if (!url || seen.has(url) || !/^https?:\\/\\//i.test(url)) continue;\n    if (/\\.(pdf|zip|docx?|xlsx?|pptx?)$/i.test(url)) continue;\n    if (junk.test(url)) continue;\n    seen.add(url);\n    const title = String(result.title || '').slice(0, 300);\n    const snippet = String(result.content || '').slice(0, 1200);\n    const haystack = (title + ' ' + snippet).toLowerCase();\n    const urlLower = url.toLowerCase();\n    let score = 0;\n    if (trusted.some((domain) => urlLower.includes(domain))) score += 2;\n    if (cities.some((place) => haystack.includes(place))) score += 2;\n    if (eventWords.some((word) => haystack.includes(word))) score += 1;\n    if (/20(26|27)/.test(haystack)) score += 1;\n    candidates.push({ json: { title, url, snippet, score } });\n  }\n}\n\ncandidates.sort((a, b) => b.json.score - a.json.score);\nreturn candidates;"
+      },
+      "id": "6142f26e-fb33-498c-a7b8-c35f98d99b32",
+      "name": "Extract candidate links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 20
+      },
+      "id": "39854df0-e215-44dc-bad3-54942aabb8d8",
+      "name": "Cap pages per run",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (compatible; n8n-event-watch/1.0)"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "2d2aa55c-53ea-4ad3-bb17-69872f5aa99d",
+      "name": "Download official pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1472,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $input.all();\nconst candidates = $('Extract candidate links').all();\nconst out = [];\n\nfor (let i = 0; i < pages.length; i++) {\n  const candidate = candidates[i] ? candidates[i].json : {};\n  const html = String(pages[i].json.data || '');\n  if (html.length < 500) continue;\n  const text = html\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&')\n    .replace(/&quot;/gi, '\"')\n    .replace(/&#0?39;|&apos;/gi, \"'\")\n    .replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>')\n    .replace(/\\s+/g, ' ')\n    .trim();\n  if (text.length < 200) continue;\n  out.push({ json: { url: candidate.url || '', title: candidate.title || '', pageText: text.slice(0, 12000) } });\n}\n\nreturn out;"
+      },
+      "id": "2e42d04d-dc98-4100-8e54-e1ea22f8aebf",
+      "name": "Read page text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You extract ONE technology event from the text of an official web page.\n\nRules:\n- Use only information explicitly written on the page. Never guess and never infer.\n- Use \"\" for every field the page does not state.\n- start_date must be YYYY-MM-DD when the page states a calendar date, otherwise \"\".\n- start_time: as written on the page, otherwise \"\".\n- is_technical: true only when the event is about software, AI, data, hardware, robotics, cybersecurity or developer tooling.\n- is_hands_on: true only for workshops, hackathons, labs, build sessions or sprints.\n- If the page is not about one specific event (blog post, news article, course catalogue, job advert, listing index, generic community page), return name \"\" and is_technical false.\n- If the page only describes an event that already took place before today, return name \"\".\n- description: at most 300 characters. practical_relevance: at most 200 characters on why a developer in Kochi would care.\n- official_url: the page you were given, unless the page clearly names a different canonical event page.\n\nToday is {{ $now.setZone('Asia/Kolkata').toFormat('yyyy-LL-dd') }} (Asia/Kolkata).\n\nSource URL: {{ $json.url }}\nSearch title hint: {{ $json.title }}\n\nPage text:\n{{ $json.pageText }}",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "id": "054099a7-16d9-4d0e-80dc-d3468d6426cd",
+      "name": "Extract event details",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1920,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "organizer": {
+              "type": "string"
+            },
+            "event_type": {
+              "type": "string"
+            },
+            "start_date": {
+              "type": "string"
+            },
+            "start_time": {
+              "type": "string"
+            },
+            "city": {
+              "type": "string"
+            },
+            "venue": {
+              "type": "string"
+            },
+            "registration_status": {
+              "type": "string"
+            },
+            "registration_deadline": {
+              "type": "string"
+            },
+            "fee": {
+              "type": "string"
+            },
+            "eligibility": {
+              "type": "string"
+            },
+            "team_size": {
+              "type": "string"
+            },
+            "registration_url": {
+              "type": "string"
+            },
+            "official_url": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "practical_relevance": {
+              "type": "string"
+            },
+            "is_technical": {
+              "type": "boolean"
+            },
+            "is_hands_on": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "organizer",
+            "event_type",
+            "start_date",
+            "start_time",
+            "city",
+            "venue",
+            "registration_status",
+            "registration_deadline",
+            "fee",
+            "eligibility",
+            "team_size",
+            "registration_url",
+            "official_url",
+            "description",
+            "practical_relevance",
+            "is_technical",
+            "is_hands_on"
+          ]
+        }
+      },
+      "id": "f2465d17-b1b2-4e31-99c1-1a80e6ae4627",
+      "name": "Event schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2064,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst items = $input.all();\nconst sources = $('Read page text').all();\nconst cities = ['kochi', 'cochin', 'ernakulam', 'kalamassery', 'thrissur', 'kottayam', 'kozhikode', 'calicut'];\nconst out = [];\nconst todayIso = $now.setZone('Asia/Kolkata').toFormat('yyyy-LL-dd');\nconst todayStart = new Date(todayIso + 'T00:00:00+05:30');\nconst sha = (value) => crypto.createHash('sha256').update(value).digest('hex');\nconst pick = (obj, key) => {\n  if (!obj || obj[key] === undefined || obj[key] === null) return '';\n  return String(obj[key]).trim();\n};\nconst asBool = (value) => value === true || String(value).toLowerCase() === 'true';\n\nfor (let i = 0; i < items.length; i++) {\n  const source = sources[i] ? sources[i].json : {};\n  let payload = items[i].json || {};\n  if (payload.output !== undefined) payload = payload.output;\n  if (payload.text !== undefined) payload = payload.text;\n  if (typeof payload === 'string') {\n    try {\n      payload = JSON.parse(payload);\n    } catch (error) {\n      continue;\n    }\n  }\n  if (!payload || typeof payload !== 'object') continue;\n\n  const name = pick(payload, 'name');\n  if (!name) continue;\n  if (!asBool(payload.is_technical)) continue;\n\n  const city = pick(payload, 'city');\n  const venue = pick(payload, 'venue');\n  const where = (city + ' ' + venue + ' ' + pick(payload, 'description')).toLowerCase();\n  if (!cities.some((place) => where.includes(place))) continue;\n\n  const statusText = (pick(payload, 'registration_status') || 'not stated').toLowerCase();\n  if (statusText.includes('closed') || statusText.includes('sold out') || statusText.includes('ended') || statusText.includes('full')) continue;\n  const openish = statusText.includes('open') || statusText.includes('pending') || statusText.includes('not stated') || statusText.includes('register') || statusText.includes('coming');\n  if (!openish) continue;\n\n  const startDate = pick(payload, 'start_date');\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)) continue;\n  const startAt = new Date(startDate + 'T00:00:00+05:30');\n  if (isNaN(startAt.getTime())) continue;\n  if (startAt.getTime() < todayStart.getTime()) continue;\n\n  const event = {\n    name,\n    organizer: pick(payload, 'organizer'),\n    event_type: pick(payload, 'event_type'),\n    start_date: startDate,\n    start_time: pick(payload, 'start_time'),\n    city,\n    venue,\n    registration_status: pick(payload, 'registration_status'),\n    registration_deadline: pick(payload, 'registration_deadline'),\n    fee: pick(payload, 'fee'),\n    eligibility: pick(payload, 'eligibility'),\n    team_size: pick(payload, 'team_size'),\n    registration_url: pick(payload, 'registration_url'),\n    official_url: pick(payload, 'official_url') || source.url || '',\n    description: pick(payload, 'description'),\n    practical_relevance: pick(payload, 'practical_relevance'),\n    is_technical: true,\n    is_hands_on: asBool(payload.is_hands_on),\n    source_url: source.url || ''\n  };\n\n  const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();\n  const statusBucket = (value) => {\n    const text = String(value || '').toLowerCase();\n    if (!text.trim()) return 'unknown';\n    if (text.includes('closed') || text.includes('sold out') || text.includes('ended') || text.includes('full')) return 'closed';\n    if (text.includes('open') || text.includes('register') || text.includes('available') || text.includes('apply')) return 'open';\n    return 'other';\n  };\n  const keySource = [normalize(event.name), normalize(event.organizer), event.start_date].join('|');\n  const eventKey = sha(keySource);\n  const materialHash = sha(JSON.stringify({\n    start_date: event.start_date,\n    start_time: normalize(event.start_time),\n    registration_status: statusBucket(event.registration_status),\n    registration_deadline: normalize(event.registration_deadline),\n    registration_url: normalize(event.registration_url),\n    fee: normalize(event.fee)\n  }));\n\n  out.push({\n    json: {\n      event_key: eventKey,\n      material_hash: materialHash,\n      name: event.name,\n      organizer: event.organizer,\n      event_date: event.start_date,\n      venue: event.venue,\n      registration_status: event.registration_status,\n      registration_url: event.registration_url,\n      official_url: event.official_url,\n      event_data: JSON.stringify(event)\n    }\n  });\n}\n\nreturn out;"
+      },
+      "id": "c5df75aa-b0c4-496b-9cbe-c980ec13654d",
+      "name": "Keep eligible events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tech_event_watch (\n  event_key, name, organizer, event_date, venue, registration_status,\n  registration_url, official_url, material_hash, event_data, material_changed\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, TRUE\n)\nON CONFLICT (event_key) DO UPDATE SET\n  name = EXCLUDED.name,\n  organizer = EXCLUDED.organizer,\n  event_date = EXCLUDED.event_date,\n  venue = EXCLUDED.venue,\n  registration_status = EXCLUDED.registration_status,\n  registration_url = EXCLUDED.registration_url,\n  official_url = EXCLUDED.official_url,\n  material_hash = EXCLUDED.material_hash,\n  event_data = EXCLUDED.event_data,\n  material_changed = (tech_event_watch.material_hash IS DISTINCT FROM EXCLUDED.material_hash),\n  last_checked_at = NOW(),\n  last_changed_at = CASE\n    WHEN tech_event_watch.material_hash IS DISTINCT FROM EXCLUDED.material_hash THEN NOW()\n    ELSE tech_event_watch.last_changed_at\n  END\nRETURNING\n  event_key, name, organizer, event_date, venue, registration_status,\n  registration_url, official_url, event_data, material_changed,\n  first_seen_at, last_changed_at",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.event_key, $json.name, $json.organizer, $json.event_date, $json.venue, $json.registration_status, $json.registration_url, $json.official_url, $json.material_hash, $json.event_data] }}",
+          "replaceEmptyStrings": true
+        }
+      },
+      "id": "ee55be32-d251-456c-84ce-b66a910e1701",
+      "name": "Upsert and detect changes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2544,
+        224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "8ihg4o9P8Krr2p2T",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all()\n  .map((item) => item.json || {})\n  .filter((row) => row && row.event_key);\n\nconst changed = rows.filter((row) => {\n  const flag = row.material_changed;\n  return !(flag === false || flag === 'false' || flag === 'f' || flag === 'F' || flag === 0 || flag === '0');\n});\n\nreturn changed.map((row) => ({ json: row }));"
+      },
+      "id": "8bc0fff3-6621-4a2c-8283-8d6d927d2cfc",
+      "name": "Collect changed events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2768,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const LF = String.fromCharCode(10);\nconst rows = $input.all().map((item) => item.json);\n\nconst escapeHtml = (value) => String(value === undefined || value === null ? '' : value)\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\n\nconst parseData = (value) => {\n  if (!value) return {};\n  if (typeof value === 'string') {\n    try {\n      return JSON.parse(value);\n    } catch (error) {\n      return {};\n    }\n  }\n  return value;\n};\n\nconst blocks = [];\nfor (const row of rows) {\n  const event = parseData(row.event_data);\n  const isNew = !row.first_seen_at || String(row.first_seen_at) === String(row.last_changed_at);\n  const lines = [(isNew ? '🆕 ' : '🔄 ') + '<b>' + escapeHtml(row.name) + '</b>'];\n  const dateText = String(event.start_date || '').trim() || String(row.event_date || '').slice(0, 10);\n  const when = [escapeHtml(dateText), escapeHtml(event.start_time)].filter((part) => part).join(' ');\n  if (when) lines.push('📅 ' + when);\n  const where = [escapeHtml(event.venue), escapeHtml(event.city)].filter((part) => part).join(', ');\n  if (where) lines.push('📍 ' + where);\n  if (event.registration_status) lines.push('🎟 Registration: ' + escapeHtml(event.registration_status));\n  if (event.registration_deadline) lines.push('⏳ Deadline: ' + escapeHtml(event.registration_deadline));\n  if (event.fee) lines.push('💰 Fee: ' + escapeHtml(event.fee));\n  if (event.eligibility) lines.push('👤 Eligibility: ' + escapeHtml(event.eligibility));\n  if (event.team_size) lines.push('👥 Team size: ' + escapeHtml(event.team_size));\n  if (event.practical_relevance) lines.push('', escapeHtml(event.practical_relevance));\n  const link = event.registration_url || row.registration_url || row.official_url;\n  if (link) lines.push('🔗 Register: ' + escapeHtml(link));\n  if (row.official_url && row.official_url !== link) lines.push('📄 Source: ' + escapeHtml(row.official_url));\n  blocks.push(lines.join(LF));\n}\n\nconst header = '<b>Kochi tech events - ' + $now.setZone('Asia/Kolkata').toFormat('dd LLL yyyy') + '</b>';\nconst messages = [];\nlet current = header;\nfor (const block of blocks) {\n  const next = current + LF + LF + block;\n  if (next.length > 3800 && current !== header) {\n    messages.push(current);\n    current = header + LF + LF + block;\n  } else {\n    current = next;\n  }\n}\nif (current !== header) messages.push(current);\n\nreturn messages.map((text) => ({ json: { text } }));"
+      },
+      "id": "e5879e20-46bc-4d87-a3d5-c140fd8eaa36",
+      "name": "Format alert messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2992,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1020864037",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "5f689255-9dba-4a04-84ba-0f9f4058b753",
+      "name": "Send Telegram alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3216,
+        224
+      ],
+      "webhookId": "f1ce01a7-c64e-436c-aff5-5115fb5ac29c",
+      "credentials": {
+        "telegramApi": {
+          "id": "8UIVs98GCekPO52b",
+          "name": "n8n session"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.4-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-5.4-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1808,
+        320
+      ],
+      "id": "6dff5859-a9a5-4749-af7f-a459dc2db3df",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "HNLSrm1pBmDxQ2w3",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily event sweep": {
+      "main": [
+        [
+          {
+            "node": "Ensure events table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure events table": {
+      "main": [
+        [
+          {
+            "node": "Build search queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build search queries": {
+      "main": [
+        [
+          {
+            "node": "Search the web",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search the web": {
+      "main": [
+        [
+          {
+            "node": "Extract candidate links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract candidate links": {
+      "main": [
+        [
+          {
+            "node": "Cap pages per run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cap pages per run": {
+      "main": [
+        [
+          {
+            "node": "Download official pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download official pages": {
+      "main": [
+        [
+          {
+            "node": "Read page text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read page text": {
+      "main": [
+        [
+          {
+            "node": "Extract event details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract event details": {
+      "main": [
+        [
+          {
+            "node": "Keep eligible events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract event details",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep eligible events": {
+      "main": [
+        [
+          {
+            "node": "Upsert and detect changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert and detect changes": {
+      "main": [
+        [
+          {
+            "node": "Collect changed events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect changed events": {
+      "main": [
+        [
+          {
+            "node": "Format alert messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format alert messages": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract event details",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "Asia/Kolkata",
+    "errorWorkflow": "anOgJKYwdXiekQ3m"
+  },
+  "versionId": "9aa2f3ed-9d81-4798-8687-2a0654fae82b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "68ce26266aac46466ac9888afe57ba6667623f6acd108577d9569abbad06e79e"
+  },
+  "nodeGroups": [
+    {
+      "id": "334336a4-6181-4d47-bb9f-0153fa80bdb8",
+      "name": "Find candidate events",
+      "nodeIds": [
+        "918f58bd-1486-4ca8-a6b4-c582ea18a8a4",
+        "80ceba75-1324-4651-ae34-edb2be96237d",
+        "6142f26e-fb33-498c-a7b8-c35f98d99b32",
+        "39854df0-e215-44dc-bad3-54942aabb8d8"
+      ],
+      "description": "Turns ten search queries into ranked, deduplicated candidate pages, capped at twenty per run"
+    },
+    {
+      "id": "51911a2e-6637-450b-8aaf-97e470e6bcda",
+      "name": "Verify official pages",
+      "nodeIds": [
+        "2d2aa55c-53ea-4ad3-bb17-69872f5aa99d",
+        "2e42d04d-dc98-4100-8e54-e1ea22f8aebf",
+        "054099a7-16d9-4d0e-80dc-d3468d6426cd",
+        "f2465d17-b1b2-4e31-99c1-1a80e6ae4627",
+        "6dff5859-a9a5-4749-af7f-a459dc2db3df"
+      ],
+      "description": "Downloads each page, reduces it to readable text, and pulls the event fields only from that text"
+    },
+    {
+      "id": "b8417db2-6f1b-4188-9faf-e3d8c86a7be4",
+      "name": "Alert on new events",
+      "nodeIds": [
+        "c5df75aa-b0c4-496b-9cbe-c980ec13654d",
+        "ee55be32-d251-456c-84ce-b66a910e1701",
+        "8bc0fff3-6621-4a2c-8283-8d6d927d2cfc",
+        "e5879e20-46bc-4d87-a3d5-c140fd8eaa36",
+        "5f689255-9dba-4a04-84ba-0f9f4058b753"
+      ],
+      "description": "Drops events already stored unchanged, saves the rest, and messages only new or edited ones"
+    }
+  ],
+  "id": "L5V8Hup1vibDDAEw",
+  "tags": []
+}
