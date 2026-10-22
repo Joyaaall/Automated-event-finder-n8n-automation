@@ -423,18 +423,5 @@ Cost grows with the number of queries and is capped by the page limit, so *Cap p
 
 ---
 
-## Repo layout
 
-```
-.
-├── README.md
-└── src/
-    └── workflows/
-        └── tech-event-radar.workflow.json
-```
 
----
-
-## License
-
-MIT
